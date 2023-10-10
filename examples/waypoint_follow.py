@@ -9,6 +9,36 @@ from numba import njit
 
 from pyglet.gl import GL_POINTS
 
+
+def draw_wheels(screen, car_color, car_pos, car_angle, car_length, car_width):
+    WHEEL_LEN = car_length / 4
+    WHEEL_WIDTH = car_width / 8
+    HALF_CAR_LEN = car_length / 2
+    HALF_CAR_WIDTH = car_width / 2
+
+    # Calculate relative wheel positions
+    front_x = car_pos[0] + HALF_CAR_LEN * np.cos(car_angle)
+    front_y = car_pos[1] + HALF_CAR_LEN * np.sin(car_angle)
+
+    rear_x = car_pos[0] - HALF_CAR_LEN * np.cos(car_angle)
+    rear_y = car_pos[1] - HALF_CAR_LEN * np.sin(car_angle)
+
+    # Calculate positions for all four wheels
+    front_left = (front_x - WHEEL_WIDTH * np.sin(car_angle), front_y + WHEEL_WIDTH * np.cos(car_angle))
+    front_right = (front_x + WHEEL_WIDTH * np.sin(car_angle), front_y - WHEEL_WIDTH * np.cos(car_angle))
+
+    rear_left = (rear_x - WHEEL_WIDTH * np.sin(car_angle), rear_y + WHEEL_WIDTH * np.cos(car_angle))
+    rear_right = (rear_x + WHEEL_WIDTH * np.sin(car_angle), rear_y - WHEEL_WIDTH * np.cos(car_angle))
+
+    # Draw wheels
+    pygame.draw.circle(screen, car_color, front_left, WHEEL_LEN / 2)
+    pygame.draw.circle(screen, car_color, front_right, WHEEL_LEN / 2)
+    pygame.draw.circle(screen, car_color, rear_left, WHEEL_LEN / 2)
+    pygame.draw.circle(screen, car_color, rear_right, WHEEL_LEN / 2)
+
+# In the visualization loop where the car is drawn:
+draw_wheels(screen, CAR_COLOR, car_pos, car_angle, CAR_LENGTH, CAR_WIDTH)
+
 """
 Planner Helpers
 """

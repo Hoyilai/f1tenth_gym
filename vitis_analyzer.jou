@@ -1,0 +1,14 @@
+#-----------------------------------------------------------
+# Vitis Analyzer v2020.2 (64-bit)
+# SW Build 3064766 on Wed Nov 18 09:12:47 MST 2020
+# 
+# Start of session at: Mon Oct  9 16:51:51 2023
+# Process ID: 3538
+# Current directory: /home/larry1129/Desktop/f1tenth_gym
+# Command line: vitis_analyzer ./mmult.xclbin.run_summary
+# Log file: /home/larry1129/Desktop/f1tenth_gym/vitis_analyzer.log
+# Journal file: /home/larry1129/Desktop/f1tenth_gym/vitis_analyzer.jou
+#-----------------------------------------------------------
+start_gui
+create_project dummy
+close_project
