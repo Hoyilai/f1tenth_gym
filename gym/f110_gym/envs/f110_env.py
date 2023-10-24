@@ -97,7 +97,13 @@ class F110Env(gym.Env):
     current_obs = None
     render_callbacks = []
 
-    def __init__(self, **kwargs):        
+    def __init__(self, **kwargs):    
+        # 4wheel steering estimate max_steer and max_speed
+        max_steer = 0.4189  # Define based on your car's capabilities or the values you've set
+        max_speed = 20.0  # Just an example, adjust based on your needs
+        self.action_space = spaces.Box(low=np.array([-max_steer, -max_steer, -max_speed]), 
+                                   high=np.array([max_steer, max_steer, max_speed]), 
+                                   dtype=np.float32)    
         # kwargs extraction
         try:
             self.seed = kwargs['seed']
@@ -125,7 +131,16 @@ class F110Env(gym.Env):
         try:
             self.params = kwargs['params']
         except:
-            self.params = {'mu': 1.0489, 'C_Sf': 4.718, 'C_Sr': 5.4562, 'lf': 0.15875, 'lr': 0.17145, 'h': 0.074, 'm': 3.74, 'I': 0.04712, 's_min': -0.4189, 's_max': 0.4189, 'sv_min': -3.2, 'sv_max': 3.2, 'v_switch': 7.319, 'a_max': 9.51, 'v_min':-5.0, 'v_max': 20.0, 'width': 0.31, 'length': 0.58}
+            self.params = {'mu': 1.0489, 'C_Sf': 4.718, 'C_Sr': 5.4562, 'lf': 0.15875, 'lr': 0.17145, 'h': 0.074, 'm': 3.74, 'I': 0.04712, 's_min': -0.4189, 's_max': 0.4189, 'sv_min': -3.2, 'sv_max': 3.2, 'v_switch': 7.319, 'a_max': 9.51, 'v_min':-5.0, 'v_max': 20.0, 'width': 0.31, 'length': 0.58
+    }
+
+        try:
+            self.params = kwargs['params_4w']
+        except:
+            self.params = {'mu': 1.0489, 'C_Sf': 4.718, 'C_Sr': 5.4562, 'lf': 0.15875, 'lr': 0.17145, 'h': 0.074, 'm': 3.74, 'I': 0.04712, 's_min': -0.4189, 's_max': 0.4189, 'sv_min': -3.2, 'sv_max': 3.2, 'v_switch': 7.319, 'a_max': 9.51, 'v_min':-5.0, 'v_max': 20.0, 'width': 0.31, 'length': 0.58 
+                               ,'s_rear_min': -0.4189,  # Minimum rear steering angle constraint-4 wheel steering
+                                's_rear_max': 0.4189,  # Maximum rear steering angle constraint-4 wheel steering
+    }
 
         # simulation parameters
         try:
@@ -293,6 +308,14 @@ class F110Env(gym.Env):
         done, toggle_list = self._check_done()
         info = {'checkpoint_done': toggle_list}
 
+        # Decompose the action into front and rear steering angles and speed
+        steer_front, steer_rear, speed = action
+
+        # Assuming the simulator accepts action in a specific format. Modify as needed
+        sim_action = np.array([steer_front, steer_rear, speed])
+
+        obs = self.sim.step(sim_action)
+
         return obs, reward, done, info
 
     def reset(self, poses):
@@ -375,6 +398,7 @@ class F110Env(gym.Env):
         """
 
         F110Env.render_callbacks.append(callback_func)
+
 
     def render(self, mode='human'):
         """

@@ -175,6 +175,10 @@ def vehicle_dynamics_st(x, u_init, mu, C_Sf, C_Sr, lf, lr, h, m, I, s_min, s_max
 
     return f
 
+
+
+# 4_wheel steering start here
+
 @njit(cache=True)
 def vehicle_dynamics_st_4w(x, u_init, mu, C_Sf, C_Sr, lf, lr, h, m, I, s_min, s_max, sv_min, sv_max, v_switch, a_max, v_min, v_max):
     """
@@ -200,56 +204,115 @@ def vehicle_dynamics_st_4w(x, u_init, mu, C_Sf, C_Sr, lf, lr, h, m, I, s_min, s_
     return f
   
 @njit(cache=True)
-def vehicle_dynamics_ks_4w(x, u, p):
-    """
-    Vehicle dynamics for the four-wheel model.
+def vehicle_dynamics_ks_4w(t, x, u, parameters):
+    # Extracting the states and control inputs
+    x_pos, y_pos, delta_fl, delta_fr, delta_rl, delta_rr, v, psi = x
+    delta_dot_fl, delta_dot_fr, delta_dot_rl, delta_dot_rr, a = u
+    
+    # Vehicle parameters
+    l_f = parameters['l_f']
+    l_r = parameters['l_r']
+    l = l_f + l_r
+    delta_max = parameters['delta_max']
+    delta_min = parameters['delta_min']
 
-    Parameters:
-    x : array_like
-        State vector [x_position, y_position, steering_angle_fl, steering_angle_fr, velocity, yaw_angle].
-    u : array_like
-        Control input vector [steering_angle_velocity_fl, steering_angle_velocity_fr, longitudinal_acceleration].
-    p : array_like
-        Vehicle parameters [lf, lr, lwb, width].
+    # Ensure steering angles are within bounds
+    delta_fl = max(delta_min, min(delta_fl, delta_max))
+    delta_fr = max(delta_min, min(delta_fr, delta_max))
+    delta_rl = max(delta_min, min(delta_rl, delta_max))
+    delta_rr = max(delta_min, min(delta_rr, delta_max))
+    
+    # Basic 4W kinematic model
+    beta = np.arctan((l_r / l) * np.tan(delta_fl) + (l_f / l) * np.tan(delta_rl))
+    
+    x_dot = v * np.cos(psi + beta)
+    y_dot = v * np.sin(psi + beta)
+    psi_dot = v * np.cos(beta) * np.tan(delta_fl) / l_f
+    v_dot = a
+
+    # Steering dynamics
+    delta_fl_dot = delta_dot_fl
+    delta_fr_dot = delta_dot_fr
+    delta_rl_dot = delta_dot_rl
+    delta_rr_dot = delta_dot_rr
+
+    # Return derivatives
+    x_dot_vec = [x_dot, y_dot, delta_fl_dot, delta_fr_dot, delta_rl_dot, delta_rr_dot, v_dot, psi_dot]
+    return x_dot_vec
+
+# Testing the modified function with some sample inputs
+t = 0
+x = [0, 0, 0, 0, 0, 0, 10, 0]  # [x_pos, y_pos, delta_fl, delta_fr, delta_rl, delta_rr, v, psi]
+u = [0, 0, 0, 0, 1]  # [delta_dot_fl, delta_dot_fr, delta_dot_rl, delta_dot_rr, a]
+parameters = {
+    'l_f': 1.4,
+    'l_r': 1.6,
+    'delta_max': np.pi/6,
+    'delta_min': -np.pi/6
+}
+
+vehicle_dynamics_ks_4w(t, x, u, parameters)
+
+#This setup should allow the optimization to find control inputs that achieve desired vehicle motions using four-wheel steering. 
+def objective_fun(u, *params):
+    x0, x_des, p = params
+    x = integrate_dynamics(x0, u, p)
+    
+    # Extract states
+    x_pos, y_pos, theta, delta_fl, delta_fr, delta_rl, delta_rr = x
+    
+    # Calculate the error
+    position_error = np.linalg.norm(x[:2] - x_des[:2])
+    orientation_error = abs(x[2] - x_des[2])
+    rear_wheel_steering_penalty = abs(delta_rl) + abs(delta_rr)
+    
+    # Weights
+    w1, w2, w3, w4 = 1.0, 1.0, 0.5, 0.1
+    cost = (w1 * position_error + w2 * orientation_error + 
+            w3 * rear_wheel_steering_penalty + w4 * control_effort_penalty(u))
+
+    return cost
+
+@njit(cache=True)
+def compute_stability(x, u, lf, lr, lwb):
+    """
+    Computes the stability of the vehicle based on slip angles and yaw rate.
+
+    Args:
+        x (array): state vector [x_position, y_position, steering_angle_fl, steering_angle_fr, velocity, yaw_angle]
+        u (array): control input vector [steering_angle_velocity_fl, steering_angle_velocity_fr, longitudinal_acceleration]
+        lf (float): distance from center of gravity (CG) to front axle
+        lr (float): distance from CG to rear axle
+        lwb (float): wheelbase length
 
     Returns:
-    x_dot : array_like
-        Time derivative of the state vector.
+        stability (float): stability metric of the vehicle. Lower values indicate more stability.
     """
     
     # Extract state variables
     delta_fl = x[2]  # Steering angle of front left wheel
     delta_fr = x[3]  # Steering angle of front right wheel
     v = x[4]         # Velocity in x direction
-    psi = x[5]       # Yaw angle
+    psi_dot = x[5]   # Yaw rate
 
-    # Extract control inputs
-    delta_dot_fl = u[0]  # Steering angle velocity of front left wheel
-    delta_dot_fr = u[1]  # Steering angle velocity of front right wheel
-    a = u[2]             # Longitudinal acceleration
+    # Compute average front steering angle
+    delta_avg = (delta_fl + delta_fr) / 2
+    
+    # Calculate slip angles for front and rear
+    slip_angle_front = np.arctan((lr / (lf + lr)) * np.tan(delta_avg))
+    slip_angle_rear = np.arctan((lf / (lf + lr)) * np.tan(delta_avg))
 
-    # Extract vehicle parameters
-    lf, lr, lwb, width = p
+    # Difference in slip angles: positive during oversteer, negative during understeer
+    slip_diff = slip_angle_rear - slip_angle_front
+    
+    # Combine yaw rate and slip difference to get a stability metric
+    # Weigh factors as needed, for now, we'll treat them equally
+    stability = abs(psi_dot) + abs(slip_diff)
+    
+    return stability
 
-    # Calculate the vehicle dynamics
-    f1 = v * np.cos(psi)
-    f2 = v * np.sin(psi)
-    f3 = delta_dot_fl
-    f4 = delta_dot_fr
-    f5 = a
-    f6 = v / lwb * np.tan((delta_fl + delta_fr) / 2)
 
-    x_dot = [f1, f2, f3, f4, f5, f6]
-
-    return x_dot
-
-# Test the function
-x_test = [0, 0, 0.1, 0.1, 1, 0]  # [x, y, delta_fl, delta_fr, v, psi]
-u_test = [0, 0, 1]  # [delta_dot_fl, delta_dot_fr, a]
-p_test = [1.2, 1.3, 2.5, 1.8]  # [lf, lr, lwb, width]
-
-vehicle_dynamics_ks_4w(x_test, u_test, p_test)
-
+# 4_wheel steering end here
 
 @njit(cache=True)
 def pid(speed, steer, current_speed, current_steer, max_sv, max_a, max_v, min_v):
