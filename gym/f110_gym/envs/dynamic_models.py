@@ -86,7 +86,7 @@ def steering_constraint(steering_angle, steering_velocity, s_min, s_max, sv_min,
 
     return steering_velocity
 
-'''
+
 @njit(cache=True)
 def vehicle_dynamics_ks(x, u_init, mu, C_Sf, C_Sr, lf, lr, h, m, I, s_min, s_max, sv_min, sv_max, v_switch, a_max, v_min, v_max):
     """
@@ -119,10 +119,64 @@ def vehicle_dynamics_ks(x, u_init, mu, C_Sf, C_Sr, lf, lr, h, m, I, s_min, s_max
          u[1],
          x[3]/lwb*np.tan(x[2])])
     return f
-'''
+
+
+def vehicle_dynamics_st(x, u_init, mu, C_Sf, C_Sr, lf, lr, h, m, I, s_min, s_max, sv_min, sv_max, v_switch, a_max, v_min, v_max):
+    """
+    Single Track Dynamic Vehicle Dynamics.
+
+        Args:
+            x (numpy.ndarray (3, )): vehicle state vector (x1, x2, x3, x4, x5, x6, x7)
+                x1: x position in global coordinates
+                x2: y position in global coordinates
+                x3: steering angle of front wheels
+                x4: velocity in x direction
+                x5: yaw angle
+                x6: yaw rate
+                x7: slip angle at vehicle center
+            u (numpy.ndarray (2, )): control input vector (u1, u2)
+                u1: steering angle velocity of front wheels
+                u2: longitudinal acceleration
+
+        Returns:
+            f (numpy.ndarray): right hand side of differential equations
+    """
+
+    # gravity constant m/s^2
+    g = 9.81
+
+    # constraints
+    u = np.array([steering_constraint(x[2], u_init[0], s_min, s_max, sv_min, sv_max), accl_constraints(x[3], u_init[1], v_switch, a_max, v_min, v_max)])
+
+    # switch to kinematic model for small velocities
+    if abs(x[3]) < 0.5:
+        # wheelbase
+        lwb = lf + lr
+
+        # system dynamics
+        x_ks = x[0:5]
+        f_ks = vehicle_dynamics_ks(x_ks, u, mu, C_Sf, C_Sr, lf, lr, h, m, I, s_min, s_max, sv_min, sv_max, v_switch, a_max, v_min, v_max)
+        f = np.hstack((f_ks, np.array([u[1]/lwb*np.tan(x[2])+x[3]/(lwb*np.cos(x[2])**2)*u[0],
+        0])))
+
+    else:
+        # system dynamics
+        f = np.array([x[3]*np.cos(x[6] + x[4]),
+            x[3]*np.sin(x[6] + x[4]),
+            u[0],
+            u[1],
+            x[5],
+            -mu*m/(x[3]*I*(lr+lf))*(lf**2*C_Sf*(g*lr-u[1]*h) + lr**2*C_Sr*(g*lf + u[1]*h))*x[5] \
+                +mu*m/(I*(lr+lf))*(lr*C_Sr*(g*lf + u[1]*h) - lf*C_Sf*(g*lr - u[1]*h))*x[6] \
+                +mu*m/(I*(lr+lf))*lf*C_Sf*(g*lr - u[1]*h)*x[2],
+            (mu/(x[3]**2*(lr+lf))*(C_Sr*(g*lf + u[1]*h)*lr - C_Sf*(g*lr - u[1]*h)*lf)-1)*x[5] \
+                -mu/(x[3]*(lr+lf))*(C_Sr*(g*lf + u[1]*h) + C_Sf*(g*lr-u[1]*h))*x[6] \
+                +mu/(x[3]*(lr+lf))*(C_Sf*(g*lr-u[1]*h))*x[2]])
+
+    return f
 
 @njit(cache=True)
-def vehicle_dynamics_ks(x, u_init, mu, C_Sf, C_Sr, lf, lr, h, m, I, s_min, s_max, sv_min, sv_max, v_switch, a_max, v_min, v_max):
+def vehicle_dynamics_st_4w(x, u_init, mu, C_Sf, C_Sr, lf, lr, h, m, I, s_min, s_max, sv_min, sv_max, v_switch, a_max, v_min, v_max):
     """
     Four Wheel Kinematic Vehicle Dynamics.example
             u2: longitudinal acceleration
@@ -146,7 +200,7 @@ def vehicle_dynamics_ks(x, u_init, mu, C_Sf, C_Sr, lf, lr, h, m, I, s_min, s_max
     return f
   
 @njit(cache=True)
-def vehicle_dynamics_4w(x, u, p):
+def vehicle_dynamics_ks_4w(x, u, p):
     """
     Vehicle dynamics for the four-wheel model.
 
@@ -194,7 +248,7 @@ x_test = [0, 0, 0.1, 0.1, 1, 0]  # [x, y, delta_fl, delta_fr, v, psi]
 u_test = [0, 0, 1]  # [delta_dot_fl, delta_dot_fr, a]
 p_test = [1.2, 1.3, 2.5, 1.8]  # [lf, lr, lwb, width]
 
-vehicle_dynamics_4w(x_test, u_test, p_test)
+vehicle_dynamics_ks_4w(x_test, u_test, p_test)
 
 
 @njit(cache=True)
