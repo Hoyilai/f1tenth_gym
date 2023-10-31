@@ -12,13 +12,6 @@
 
 
 
-"""
-Prototype of vehicle dynamics functions and classes for simulating 2D Single
-Track dynamic model
-Following the implementation of commanroad's Single Track Dynamics model
-Original implementation: https://gitlab.lrz.de/tum-cps/commonroad-vehicle-models/
-Author: Hongrui Zheng
-"""
 
 import numpy as np
 from numba import njit
@@ -179,7 +172,7 @@ def vehicle_dynamics_st(x, u_init, mu, C_Sf, C_Sr, lf, lr, h, m, I, s_min, s_max
 
 # 4_wheel steering start here
 
-@njit(cache=True)
+
 def vehicle_dynamics_st_4w(x, u_init, mu, C_Sf, C_Sr, lf, lr, h, m, I, s_min, s_max, sv_min, sv_max, v_switch, a_max, v_min, v_max):
     """
     Four Wheel Kinematic Vehicle Dynamics.example
@@ -201,18 +194,27 @@ def vehicle_dynamics_st_4w(x, u_init, mu, C_Sf, C_Sr, lf, lr, h, m, I, s_min, s_
         u[0],
         u[1]
     ])
+
+    # Extract the front and rear steering angles from u_init
+    delta_f = u_init[1]
+    delta_r = u_init[2]
+    
+    # Update the side slip angle beta and yaw rate dot_psi to account for 4-wheel steering
+    beta = atan((lr * delta_f + lf * delta_r) / (v + lr * dot_psi - lf * dot_psi))
+    dot_psi = (2 * (F_yf * lf - F_yr * lr) - (2 * F_xr + 2 * F_xf) * beta) / I
+    
     return f
   
-@njit(cache=True)
+
 def vehicle_dynamics_ks_4w(t, x, u, parameters):
     # Extracting the states and control inputs
     x_pos, y_pos, delta_fl, delta_fr, delta_rl, delta_rr, v, psi = x
     delta_dot_fl, delta_dot_fr, delta_dot_rl, delta_dot_rr, a = u
     
     # Vehicle parameters
-    l_f = parameters['l_f']
-    l_r = parameters['l_r']
-    l = l_f + l_r
+    lf = parameters['lf']
+    lr = parameters['lr']
+    l = lf + lr
     delta_max = parameters['delta_max']
     delta_min = parameters['delta_min']
 
@@ -223,11 +225,11 @@ def vehicle_dynamics_ks_4w(t, x, u, parameters):
     delta_rr = max(delta_min, min(delta_rr, delta_max))
     
     # Basic 4W kinematic model
-    beta = np.arctan((l_r / l) * np.tan(delta_fl) + (l_f / l) * np.tan(delta_rl))
+    beta = np.arctan((lr / l) * np.tan(delta_fl) + (lf / l) * np.tan(delta_rl))
     
     x_dot = v * np.cos(psi + beta)
     y_dot = v * np.sin(psi + beta)
-    psi_dot = v * np.cos(beta) * np.tan(delta_fl) / l_f
+    psi_dot = v * np.cos(beta) * np.tan(delta_fl) / lf
     v_dot = a
 
     # Steering dynamics
@@ -240,38 +242,8 @@ def vehicle_dynamics_ks_4w(t, x, u, parameters):
     x_dot_vec = [x_dot, y_dot, delta_fl_dot, delta_fr_dot, delta_rl_dot, delta_rr_dot, v_dot, psi_dot]
     return x_dot_vec
 
-# Testing the modified function with some sample inputs
-t = 0
-x = [0, 0, 0, 0, 0, 0, 10, 0]  # [x_pos, y_pos, delta_fl, delta_fr, delta_rl, delta_rr, v, psi]
-u = [0, 0, 0, 0, 1]  # [delta_dot_fl, delta_dot_fr, delta_dot_rl, delta_dot_rr, a]
-parameters = {
-    'l_f': 1.4,
-    'l_r': 1.6,
-    'delta_max': np.pi/6,
-    'delta_min': -np.pi/6
-}
 
-vehicle_dynamics_ks_4w(t, x, u, parameters)
 
-#This setup should allow the optimization to find control inputs that achieve desired vehicle motions using four-wheel steering. 
-def objective_fun(u, *params):
-    x0, x_des, p = params
-    x = integrate_dynamics(x0, u, p)
-    
-    # Extract states
-    x_pos, y_pos, theta, delta_fl, delta_fr, delta_rl, delta_rr = x
-    
-    # Calculate the error
-    position_error = np.linalg.norm(x[:2] - x_des[:2])
-    orientation_error = abs(x[2] - x_des[2])
-    rear_wheel_steering_penalty = abs(delta_rl) + abs(delta_rr)
-    
-    # Weights
-    w1, w2, w3, w4 = 1.0, 1.0, 0.5, 0.1
-    cost = (w1 * position_error + w2 * orientation_error + 
-            w3 * rear_wheel_steering_penalty + w4 * control_effort_penalty(u))
-
-    return cost
 
 @njit(cache=True)
 def compute_stability(x, u, lf, lr, lwb):

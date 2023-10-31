@@ -26,6 +26,14 @@ from numba import njit
 import unittest
 import time
 
+import sys
+
+
+import sys
+sys.path.append('/home/larry1129/f1tenth_gym/gym/f110_gym/envs')
+
+from dynamic_models import vehicle_dynamics_ks_4w, vehicle_dynamics_st_4w
+
 @njit(cache=True)
 def accl_constraints(vel, accl, v_switch, a_max, v_min, v_max):
     """
