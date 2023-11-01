@@ -37,9 +37,23 @@ from f110_gym.envs.dynamic_models import vehicle_dynamics_st, pid
 from f110_gym.envs.laser_models import ScanSimulator2D, check_ttc_jit, ray_cast
 from f110_gym.envs.collision_models import get_vertices, collision_multiple
 
+from .dynamic_models import vehicle_dynamics_st_4w, vehicle_dynamics_ks_4w
+
 class Integrator(Enum):
     RK4 = 1
     Euler = 2
+
+    @staticmethod
+    def step(delta, delta_rear, v, x, y, theta, wb):
+        # This function will now need to use the dynamics function for 4-wheel steering.
+        # Use the `vehicle_dynamics_st_4w` or `vehicle_dynamics_ks_4w` based on the model you want.
+        # Assuming vehicle_dynamics_st_4w:
+        x_dot, y_dot, theta_dot = vehicle_dynamics_st_4w(v, delta, delta_rear, theta, wb)
+        x += x_dot * Integrator.dt
+        y += y_dot * Integrator.dt
+        theta += theta_dot * Integrator.dt
+        return x, y, theta
+
 
 
 class RaceCar(object):
@@ -621,3 +635,5 @@ class Simulator(object):
         # loop over poses to reset
         for i in range(self.num_agents):
             self.agents[i].reset(poses[i, :])
+
+

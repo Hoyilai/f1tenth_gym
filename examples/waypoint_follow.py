@@ -10,35 +10,10 @@ from numba import njit
 
 from pyglet.gl import GL_POINTS
 
+initial_front_steer = 0.0  # No steering input at the start
+initial_rear_steer = 0.0   # No steering input at the start
+initial_speed = 0.0        # Car starts from a standstill
 
-def draw_wheels(screen, car_color, car_pos, car_angle, car_length, car_width):
-    WHEEL_LEN = car_length / 4
-    WHEEL_WIDTH = car_width / 8
-    HALF_CAR_LEN = car_length / 2
-    HALF_CAR_WIDTH = car_width / 2
-
-    # Calculate relative wheel positions
-    front_x = car_pos[0] + HALF_CAR_LEN * np.cos(car_angle)
-    front_y = car_pos[1] + HALF_CAR_LEN * np.sin(car_angle)
-
-    rear_x = car_pos[0] - HALF_CAR_LEN * np.cos(car_angle)
-    rear_y = car_pos[1] - HALF_CAR_LEN * np.sin(car_angle)
-
-    # Calculate positions for all four wheels
-    front_left = (front_x - WHEEL_WIDTH * np.sin(car_angle), front_y + WHEEL_WIDTH * np.cos(car_angle))
-    front_right = (front_x + WHEEL_WIDTH * np.sin(car_angle), front_y - WHEEL_WIDTH * np.cos(car_angle))
-
-    rear_left = (rear_x - WHEEL_WIDTH * np.sin(car_angle), rear_y + WHEEL_WIDTH * np.cos(car_angle))
-    rear_right = (rear_x + WHEEL_WIDTH * np.sin(car_angle), rear_y - WHEEL_WIDTH * np.cos(car_angle))
-
-    # Draw wheels
-    pygame.draw.circle(screen, car_color, front_left, WHEEL_LEN / 2)
-    pygame.draw.circle(screen, car_color, front_right, WHEEL_LEN / 2)
-    pygame.draw.circle(screen, car_color, rear_left, WHEEL_LEN / 2)
-    pygame.draw.circle(screen, car_color, rear_right, WHEEL_LEN / 2)
-
-# In the visualization loop where the car is drawn:
-draw_wheels(screen, CAR_COLOR, car_pos, car_angle, CAR_LENGTH, CAR_WIDTH)
 
 """
 Planner Helpers
@@ -247,7 +222,7 @@ class PurePursuitPlanner:
 
         return speed, steering_angle
     '''
-    #new plan function for 4 wheel steering
+    #new plan function for four wheel steering
     def plan(self, pose_x, pose_y, pose_theta, lookahead_distance, vgain):
         position = np.array([pose_x, pose_y])
         lookahead_point = self._get_current_waypoint(self.waypoints, lookahead_distance, position, pose_theta)
@@ -255,10 +230,11 @@ class PurePursuitPlanner:
         if lookahead_point is None:
             return 4.0, 0.0, 0.0
 
-        front_steering_angle, rear_steering_angle = compute_steering_angles(...)  # You need to define this function based on your dynamics
+        front_steering_angle, rear_steering_angle = compute_steering_angles(pose_theta, lookahead_point, position, lookahead_distance, self.wheelbase)  # You need to define this function based on your dynamics or you can use a simple model to compute the rear steering based on the front steering angle.
         speed = vgain * lookahead_point[2]
 
         return speed, front_steering_angle, rear_steering_angle
+
 
 
 class FlippyPlanner:
@@ -323,6 +299,8 @@ def draw_wheels_using_pyglet(env_renderer, car_pos, car_angle, CAR_LENGTH, CAR_W
                            ('c3B', wheel_color))
 
 
+#draw_wheels_using_pyglet(env_renderer, car_pos, car_angle, CAR_LENGTH, CAR_WIDTH)
+
 def main():
     """
     main entry point
@@ -363,7 +341,10 @@ def main():
     env = gym.make('f110_gym:f110-v0', map=conf.map_path, map_ext=conf.map_ext, num_agents=1, timestep=0.01, integrator=Integrator.RK4)
     env.add_render_callback(render_callback)
     
-    obs, step_reward, done, info = env.reset(np.array([[conf.sx, conf.sy, conf.stheta]]))
+
+    initial_action = np.array([[0.0, 0.0, 1.0]])  # This is just a sample, yours might be different
+    print(initial_action.shape)  # <-- Add this line here
+    obs, step_reward, done, info = env.reset(initial_action)
     env.render()
 
     laptime = 0.0
@@ -371,13 +352,13 @@ def main():
 
     while not done:
         speed, front_steer, rear_steer = planner.plan(obs['poses_x'][0], obs['poses_y'][0], obs['poses_theta'][0], work['tlad'], work['vgain'])
-        # For now, just use front_steer, but ideally, you'd modify the environment to accept both steering angles
-        obs, step_reward, done, info = env.step(np.array([[front_steer, speed]]))
-
+        obs, step_reward, done, info = env.step(np.array([[front_steer, rear_steer, speed]]))
         laptime += step_reward
         env.render(mode='human')
+
         
     print('Sim elapsed time:', laptime, 'Real elapsed time:', time.time()-start)
 
 if __name__ == '__main__':
     main()
+

@@ -29,6 +29,8 @@ import gym
 from gym import error, spaces, utils
 from gym.utils import seeding
 
+import copy
+
 # base classes
 from f110_gym.envs.base_classes import Simulator, Integrator
 
@@ -272,17 +274,27 @@ class F110Env(gym.Env):
         Step function for the gym env
 
         Args:
-            action (np.ndarray(num_agents, 2))
+            action (np.ndarray(num_agents, 3)): The action format should be [front_steer, rear_steer, speed]
 
         Returns:
             obs (dict): observation of the current step
             reward (float, default=self.timestep): step reward, currently is physics timestep
             done (bool): if the simulation is done
-            info (dict): auxillary information dictionary
+            info (dict): auxiliary information dictionary
         """
-        
-        # call simulation step
-        obs = self.sim.step(action)
+        print("Action shape inside step:", action.shape)
+
+        # Ensure the action has the correct format
+        assert action.shape[1] == 3, "Action should be of shape (num_agents, 3) with format [front_steer, rear_steer, speed]"
+
+        # Decompose the action into front and rear steering angles and speed
+        steer_front, steer_rear, speed = action.T  # Transpose to get the correct shapes for unpacking
+
+        # Assuming the simulator accepts action in a specific format. Modify as needed
+        sim_action = np.array([steer_front, steer_rear, speed])
+
+        # Call simulation step
+        obs = self.sim.step(sim_action)
         obs['lap_times'] = self.lap_times
         obs['lap_counts'] = self.lap_counts
 
@@ -295,28 +307,21 @@ class F110Env(gym.Env):
             'poses_theta': obs['poses_theta'],
             'lap_times': obs['lap_times'],
             'lap_counts': obs['lap_counts']
-            }
+        }
 
-        # times
+        # Times
         reward = self.timestep
         self.current_time = self.current_time + self.timestep
-        
-        # update data member
+
+        # Update data member
         self._update_state(obs)
 
-        # check done
+        # Check done
         done, toggle_list = self._check_done()
         info = {'checkpoint_done': toggle_list}
 
-        # Decompose the action into front and rear steering angles and speed
-        steer_front, steer_rear, speed = action
-
-        # Assuming the simulator accepts action in a specific format. Modify as needed
-        sim_action = np.array([steer_front, steer_rear, speed])
-
-        obs = self.sim.step(sim_action)
-
         return obs, reward, done, info
+
 
     def reset(self, poses):
         """
@@ -349,8 +354,14 @@ class F110Env(gym.Env):
         self.sim.reset(poses)
 
         # get no input observations
-        action = np.zeros((self.num_agents, 2))
-        obs, reward, done, info = self.step(action)
+        # get no input observations
+        action = np.zeros((self.num_agents, 3)) # Change this line to make it shape (1, 3)
+        print("Action shape before deepcopy:", action.shape)
+        action_copy = copy.deepcopy(action)
+        print("Action shape at start of reset:", action_copy.shape)
+
+        obs, reward, done, info = self.step(action_copy)
+
 
         self.render_obs = {
             'ego_idx': obs['ego_idx'],
@@ -359,9 +370,10 @@ class F110Env(gym.Env):
             'poses_theta': obs['poses_theta'],
             'lap_times': obs['lap_times'],
             'lap_counts': obs['lap_counts']
-            }
+        }
         
         return obs, reward, done, info
+
 
     def update_map(self, map_path, map_ext):
         """
