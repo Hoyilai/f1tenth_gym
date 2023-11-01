@@ -6,6 +6,12 @@ import numpy as np
 from argparse import Namespace
 import pyglet
 
+
+import sys
+sys.path.append('/home/larry1129/f1tenth_gym/gym/f110_gym/envs')
+from rendering import CAR_LENGTH, CAR_WIDTH
+
+
 from numba import njit
 
 from pyglet.gl import GL_POINTS
@@ -13,6 +19,25 @@ from pyglet.gl import GL_POINTS
 initial_front_steer = 0.0  # No steering input at the start
 initial_rear_steer = 0.0   # No steering input at the start
 initial_speed = 0.0        # Car starts from a standstill
+
+
+
+def compute_steering_angles(pose_theta, lookahead_point, position, lookahead_distance, wheelbase):
+    # Compute the desired heading
+    delta_y = lookahead_point[1] - position[1]
+    delta_x = lookahead_point[0] - position[0]
+    theta_desired = np.arctan2(delta_y, delta_x)
+    
+    # Compute the error in heading
+    theta_e = theta_desired - pose_theta
+    
+    # Compute front steering angle based on heading error
+    front_steering_angle = np.arctan(2 * np.sin(theta_e) * wheelbase / lookahead_distance)
+    
+    # Assuming rear steering angle is some function of the front steering angle
+    rear_steering_angle = 0.5 * front_steering_angle  # This is just an example and might not be accurate
+    
+    return front_steering_angle, rear_steering_angle
 
 
 """
@@ -258,7 +283,16 @@ class FlippyPlanner:
         return self.speed, self.steer
 
 
-#The number here will change, like the car size. 
+def generate_circle_vertices(center, radius, segments=20):
+    """Generate vertices for a circle using its center and radius."""
+    vertices = []
+    for i in range(segments):
+        theta = 2.0 * 3.1415926 * float(i) / float(segments)  # get the current angle
+        dx = radius * np.cos(theta)
+        dy = radius * np.sin(theta)
+        vertices.extend((center[0] + dx, center[1] + dy))
+    return vertices
+
 def draw_wheels_using_pyglet(env_renderer, car_pos, car_angle, CAR_LENGTH, CAR_WIDTH):
     WHEEL_RADIUS = CAR_LENGTH / 8
     
@@ -283,23 +317,16 @@ def draw_wheels_using_pyglet(env_renderer, car_pos, car_angle, CAR_LENGTH, CAR_W
     rear_left = (scale_factor * rear_left[0], scale_factor * rear_left[1])
     rear_right = (scale_factor * rear_right[0], scale_factor * rear_right[1])
 
-    # Use pyglet to draw the wheels
-    wheel_color = (100, 100, 100)  # RGB for grey, adjust as needed
-    env_renderer.batch.add(1, pyglet.gl.GL_TRIANGLE_FAN, None, 
-                           ('v2f', (front_left[0], front_left[1], WHEEL_RADIUS)),
-                           ('c3B', wheel_color))
-    env_renderer.batch.add(1, pyglet.gl.GL_TRIANGLE_FAN, None, 
-                           ('v2f', (front_right[0], front_right[1], WHEEL_RADIUS)),
-                           ('c3B', wheel_color))
-    env_renderer.batch.add(1, pyglet.gl.GL_TRIANGLE_FAN, None, 
-                           ('v2f', (rear_left[0], rear_left[1], WHEEL_RADIUS)),
-                           ('c3B', wheel_color))
-    env_renderer.batch.add(1, pyglet.gl.GL_TRIANGLE_FAN, None, 
-                           ('v2f', (rear_right[0], rear_right[1], WHEEL_RADIUS)),
-                           ('c3B', wheel_color))
+    wheel_color = (100, 100, 100)  # RGB for grey
+
+    # Generate vertices for each wheel and add to the renderer batch
+    for wheel_center in [front_left, front_right, rear_left, rear_right]:
+        wheel_vertices = generate_circle_vertices(wheel_center, WHEEL_RADIUS * scale_factor)  # scale the radius as well
+        env_renderer.batch.add(len(wheel_vertices) // 2, pyglet.gl.GL_TRIANGLE_FAN, None, 
+                               ('v2f', wheel_vertices),
+                               ('c3B', wheel_color * (len(wheel_vertices) // 2)))
 
 
-#draw_wheels_using_pyglet(env_renderer, car_pos, car_angle, CAR_LENGTH, CAR_WIDTH)
 
 def main():
     """

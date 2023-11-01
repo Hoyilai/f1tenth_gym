@@ -96,6 +96,9 @@ class RaceCar(object):
         """
 
         # initialization
+        self.scan = None
+        self.scan = np.zeros(num_beams)
+
         self.params = params
         self.seed = seed
         self.is_ego = is_ego
@@ -252,6 +255,8 @@ class RaceCar(object):
             None
         """
         
+        if current_scan is None:
+            raise ValueError("current_scan is None!")
         in_collision = check_ttc_jit(current_scan, self.state[3], self.scan_angles, self.cosines, self.side_distances, self.ttc_thresh)
 
         # if in collision stop vehicle
@@ -265,7 +270,8 @@ class RaceCar(object):
 
         return in_collision
 
-    def update_pose(self, raw_steer, vel):
+    def update_pose(self, front_steer, rear_steer, vel):
+
         """
         Steps the vehicle's physical simulation
 
@@ -283,15 +289,17 @@ class RaceCar(object):
         steer = 0.
         if self.steer_buffer.shape[0] < self.steer_buffer_size:
             steer = 0.
-            self.steer_buffer = np.append(raw_steer, self.steer_buffer)
+            self.steer_buffer = np.append(front_steer, self.steer_buffer)
+
         else:
             steer = self.steer_buffer[-1]
             self.steer_buffer = self.steer_buffer[:-1]
-            self.steer_buffer = np.append(raw_steer, self.steer_buffer)
+            self.steer_buffer = np.append(front_steer, self.steer_buffer)
+
 
 
         # steering angle velocity input to steering velocity acceleration input
-        accl, sv = pid(vel, steer, self.state[3], self.state[2], self.params['sv_max'], self.params['a_max'], self.params['v_max'], self.params['v_min'])
+        accl, sv = pid(vel, front_steer, self.state[3], self.state[2], self.params['sv_max'], self.params['a_max'], self.params['v_max'], self.params['v_min'])
         
         if self.integrator is Integrator.RK4:
             # RK4 integration
@@ -416,9 +424,16 @@ class RaceCar(object):
             self.state[4] = self.state[4] + 2*np.pi
 
         # update scan
-        current_scan = RaceCar.scan_simulator.scan(np.append(self.state[0:2], self.state[4]), self.scan_rng)
+        
+        #front_steer = control_inputs[i, 0]
+        #rear_steer = control_inputs[i, 1]
+        #speed = control_inputs[i, 2]
 
-        return current_scan
+        #current_scan = agent.update_pose(front_steer, rear_steer, speed)
+        
+
+
+        #return current_scan
 
     def update_opp_poses(self, opp_poses):
         """
@@ -445,6 +460,12 @@ class RaceCar(object):
         Returns:
             None
         """
+        if agent_scans is None:
+            raise ValueError("agent_scans is None in update_scan!")
+        if agent_index >= len(agent_scans) or agent_scans[agent_index] is None:
+            print(f"Length of agent_scans: {len(agent_scans)}, agent_index: {agent_index}, agent_scans[{agent_index}]: {agent_scans[agent_index]}")
+            raise ValueError(f"Invalid scan for index {agent_index} in agent_scans!")
+        self.scan = agent_scans[agent_index]
 
         current_scan = agent_scans[agent_index]
 
@@ -453,8 +474,12 @@ class RaceCar(object):
 
         # ray cast other agents to modify scan
         new_scan = self.ray_cast_agents(current_scan)
+            # Check if new_scan is None
+        if new_scan is None:
+            new_scan = self.scan  # Keep the old scan if new_scan is None
 
         agent_scans[agent_index] = new_scan
+
 
 class Simulator(object):
     """
@@ -493,6 +518,7 @@ class Simulator(object):
         self.agents = []
         self.collisions = np.zeros((self.num_agents, ))
         self.collision_idx = -1 * np.ones((self.num_agents, ))
+
 
         # initializing agents
         for i in range(self.num_agents):
@@ -559,7 +585,7 @@ class Simulator(object):
 
     def step(self, control_inputs):
         """
-        Steps the simulation environment
+        Steps the simulation environment.
 
         Args:
             control_inputs (np.ndarray (num_agents, 2)): control inputs of all agents, first column is desired steering angle, second column is desired velocity
@@ -567,14 +593,15 @@ class Simulator(object):
         Returns:
             observations (dict): dictionary for observations: poses of agents, current laser scan of each agent, collision indicators, etc.
         """
-
-
         agent_scans = []
 
         # looping over agents
         for i, agent in enumerate(self.agents):
-            # update each agent's pose
-            current_scan = agent.update_pose(control_inputs[i, 0], control_inputs[i, 1])
+            # Update each agent's pose
+            agent.update_pose(control_inputs[i, 0], control_inputs[i, 1], control_inputs[i, 2])
+            
+            # Assuming each agent has a scan attribute that stores the current scan.
+            current_scan = agent.scan
             agent_scans.append(current_scan)
 
             # update sim's information of agent poses
@@ -589,6 +616,9 @@ class Simulator(object):
             agent.update_opp_poses(opp_poses)
 
             # update each agent's current scan based on other agents
+            if not agent_scans:
+                raise ValueError("agent_scans is empty in step!")
+            
             agent.update_scan(agent_scans, i)
 
             # update agent collision with environment
@@ -596,27 +626,20 @@ class Simulator(object):
                 self.collisions[i] = 1.
 
         # fill in observations
-        # state is [x, y, steer_angle, vel, yaw_angle, yaw_rate, slip_angle]
-        # collision_angles is removed from observations
-        observations = {'ego_idx': self.ego_idx,
-            'scans': [],
-            'poses_x': [],
-            'poses_y': [],
-            'poses_theta': [],
-            'linear_vels_x': [],
-            'linear_vels_y': [],
-            'ang_vels_z': [],
-            'collisions': self.collisions}
-        for i, agent in enumerate(self.agents):
-            observations['scans'].append(agent_scans[i])
-            observations['poses_x'].append(agent.state[0])
-            observations['poses_y'].append(agent.state[1])
-            observations['poses_theta'].append(agent.state[4])
-            observations['linear_vels_x'].append(agent.state[3])
-            observations['linear_vels_y'].append(0.)
-            observations['ang_vels_z'].append(agent.state[5])
+        observations = {
+            'ego_idx': self.ego_idx,
+            'scans': agent_scans,  # directly use agent_scans list
+            'poses_x': [agent.state[0] for agent in self.agents],
+            'poses_y': [agent.state[1] for agent in self.agents],
+            'poses_theta': [agent.state[4] for agent in self.agents],
+            'linear_vels_x': [agent.state[3] for agent in self.agents],
+            'linear_vels_y': [0. for agent in self.agents],
+            'ang_vels_z': [agent.state[5] for agent in self.agents],
+            'collisions': self.collisions
+        }
 
         return observations
+
 
     def reset(self, poses):
         """

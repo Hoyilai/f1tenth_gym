@@ -288,10 +288,7 @@ class F110Env(gym.Env):
         assert action.shape[1] == 3, "Action should be of shape (num_agents, 3) with format [front_steer, rear_steer, speed]"
 
         # Decompose the action into front and rear steering angles and speed
-        steer_front, steer_rear, speed = action.T  # Transpose to get the correct shapes for unpacking
-
-        # Assuming the simulator accepts action in a specific format. Modify as needed
-        sim_action = np.array([steer_front, steer_rear, speed])
+        sim_action = action
 
         # Call simulation step
         obs = self.sim.step(sim_action)
