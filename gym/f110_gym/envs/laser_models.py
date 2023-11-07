@@ -52,7 +52,7 @@ def get_dt(bitmap, resolution):
     dt = resolution * edt(bitmap)
     return dt
 
-@njit(cache=True)
+   
 def xy_2_rc(x, y, orig_x, orig_y, orig_c, orig_s, height, width, resolution):
     """
     Translate (x, y) coordinate into (r, c) in the matrix
@@ -85,7 +85,7 @@ def xy_2_rc(x, y, orig_x, orig_y, orig_c, orig_s, height, width, resolution):
 
     return r, c
 
-@njit(cache=True)
+   
 def distance_transform(x, y, orig_x, orig_y, orig_c, orig_s, height, width, resolution, dt):
     """
     Look up corresponding distance in the distance matrix
@@ -103,7 +103,7 @@ def distance_transform(x, y, orig_x, orig_y, orig_c, orig_s, height, width, reso
     distance = dt[r, c]
     return distance
 
-@njit(cache=True)
+   
 def trace_ray(x, y, theta_index, sines, cosines, eps, orig_x, orig_y, orig_c, orig_s, height, width, resolution, dt, max_range):
     """
     Find the length of a specific ray at a specific scan angle theta
@@ -145,7 +145,7 @@ def trace_ray(x, y, theta_index, sines, cosines, eps, orig_x, orig_y, orig_c, or
     
     return total_dist
 
-@njit(cache=True)
+   
 def get_scan(pose, theta_dis, fov, num_beams, theta_index_increment, sines, cosines, eps, orig_x, orig_y, orig_c, orig_s, height, width, resolution, dt, max_range):
     """
     Perform the scan for each discretized angle of each beam of the laser, loop heavy, should be JITted
@@ -185,7 +185,6 @@ def get_scan(pose, theta_dis, fov, num_beams, theta_index_increment, sines, cosi
 
     return scan
 
-@njit(cache=True, error_model='numpy')
 def check_ttc_jit(scan, vel, scan_angles, cosines, side_distances, ttc_thresh):
     """
     Checks the iTTC of each beam in a scan for collision with environment
@@ -202,6 +201,10 @@ def check_ttc_jit(scan, vel, scan_angles, cosines, side_distances, ttc_thresh):
         in_collision (bool): whether vehicle is in collision with environment
         collision_angle (float): at which angle the collision happened
     """
+
+    # Initialize the in_collision variable to False
+    in_collision = False
+
     if scan is None:
         raise ValueError("scan is None inside check_ttc_jit!")
     #print(f"Type of scan: {type(scan)}")
@@ -218,7 +221,7 @@ def check_ttc_jit(scan, vel, scan_angles, cosines, side_distances, ttc_thresh):
 
     return in_collision
 
-@njit(cache=True)
+   
 def cross(v1, v2):
     """
     Cross product of two 2-vectors
@@ -231,7 +234,7 @@ def cross(v1, v2):
     """
     return v1[0]*v2[1]-v1[1]*v2[0]
 
-@njit(cache=True)
+   
 def are_collinear(pt_a, pt_b, pt_c):
     """
     Checks if three points are collinear in 2D
@@ -248,7 +251,7 @@ def are_collinear(pt_a, pt_b, pt_c):
     col = np.fabs(cross(ba, ca)) < tol
     return col
 
-@njit(cache=True)
+   
 def get_range(pose, beam_theta, va, vb):
     """
     Get the distance at a beam angle to the vector formed by two of the four vertices of a vehicle
@@ -281,7 +284,7 @@ def get_range(pose, beam_theta, va, vb):
 
     return distance
 
-@njit(cache=True)
+   
 def get_blocked_view_indices(pose, vertices, scan_angles):
     """
     Get the indices of the start and end of blocked fov in scans by another vehicle
@@ -317,7 +320,7 @@ def get_blocked_view_indices(pose, vertices, scan_angles):
     return min(inds), max(inds)
 
 
-@njit(cache=True)
+   
 def ray_cast(pose, scan, scan_angles, vertices):
     """
     Modify a scan by ray casting onto another agent's four vertices

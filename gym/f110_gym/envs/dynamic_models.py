@@ -19,7 +19,7 @@ from numba import njit
 import unittest
 import time
 
-@njit(cache=True)
+ 
 def accl_constraints(vel, accl, v_switch, a_max, v_min, v_max):
     """
     Acceleration constraints, adjusts the acceleration based on constraints
@@ -52,7 +52,7 @@ def accl_constraints(vel, accl, v_switch, a_max, v_min, v_max):
 
     return accl
 
-@njit(cache=True)
+ 
 def steering_constraint(steering_angle, steering_velocity, s_min, s_max, sv_min, sv_max):
     """
     Steering constraints, adjusts the steering velocity based on constraints
@@ -80,7 +80,7 @@ def steering_constraint(steering_angle, steering_velocity, s_min, s_max, sv_min,
     return steering_velocity
 
 
-@njit(cache=True)
+ 
 def vehicle_dynamics_ks(x, u_init, mu, C_Sf, C_Sr, lf, lr, h, m, I, s_min, s_max, sv_min, sv_max, v_switch, a_max, v_min, v_max):
     """
     Single Track Kinematic Vehicle Dynamics.
@@ -245,7 +245,7 @@ def vehicle_dynamics_ks_4w(t, x, u, parameters):
 
 
 
-@njit(cache=True)
+ 
 def compute_stability(x, u, lf, lr, lwb):
     """
     Computes the stability of the vehicle based on slip angles and yaw rate.
@@ -286,7 +286,7 @@ def compute_stability(x, u, lf, lr, lwb):
 
 # 4_wheel steering end here
 
-@njit(cache=True)
+ 
 def pid(speed, steer, current_speed, current_steer, max_sv, max_a, max_v, min_v):
     """
     Basic controller for speed/steer -> accl./steer vel.

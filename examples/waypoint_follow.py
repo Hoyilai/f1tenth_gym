@@ -6,6 +6,8 @@ import numpy as np
 from argparse import Namespace
 import pyglet
 
+import logging
+
 
 import sys
 sys.path.append('/home/larry1129/f1tenth_gym/gym/f110_gym/envs')
@@ -21,6 +23,44 @@ initial_rear_steer = 0.0   # No steering input at the start
 initial_speed = 0.0        # Car starts from a standstill
 
 
+# Configure logging
+logging.basicConfig(filename='/home/larry1129/f1tenth_gym/logfile.log', level=logging.DEBUG, 
+                    format='%(asctime)s:%(levelname)s:%(message)s')
+
+
+
+
+
+def wrap_angle(angle):
+    """Wraps the angle to the range of -pi to pi."""
+    while angle > np.pi:
+        angle -= 2 * np.pi
+    while angle < -np.pi:
+        angle += 2 * np.pi
+    return angle
+
+
+def scale_steering(steering_angle, max_steering_angle):
+    """Scales the steering angle to be within the maximum limits."""
+    return np.clip(steering_angle, -max_steering_angle, max_steering_angle)
+
+
+
+def proportional_speed_control(front_steering_angle, rear_steering_angle, max_speed, min_speed, max_steering_angle):
+    """Adjusts the speed of the vehicle based on the steering angles."""
+    steering_magnitude = np.hypot(front_steering_angle, rear_steering_angle)
+    steering_scale = min(steering_magnitude / max_steering_angle, 1)
+    speed = max_speed * (1 - steering_scale**2)  # Squaring scale for more sensitivity
+    speed = np.clip(speed, min_speed, max_speed)
+    return speed
+
+def rate_limit_steering(current_steering, proposed_steering, rate_limit):
+    """Limits the rate of change of the steering angle."""
+    steering_change = proposed_steering - current_steering
+    steering_change = np.clip(steering_change, -rate_limit, rate_limit)
+    return current_steering + steering_change
+
+
 
 def compute_steering_angles(pose_theta, lookahead_point, position, lookahead_distance, wheelbase):
     # Compute the desired heading
@@ -28,22 +68,31 @@ def compute_steering_angles(pose_theta, lookahead_point, position, lookahead_dis
     delta_x = lookahead_point[0] - position[0]
     theta_desired = np.arctan2(delta_y, delta_x)
     
+    # Wrap pose_theta and theta_desired to ensure they are within the correct range
+    pose_theta = wrap_angle(pose_theta)
+    theta_desired = wrap_angle(theta_desired)
+    
     # Compute the error in heading
-    theta_e = theta_desired - pose_theta
+    theta_e = wrap_angle(theta_desired - pose_theta)
     
     # Compute front steering angle based on heading error
     front_steering_angle = np.arctan(2 * np.sin(theta_e) * wheelbase / lookahead_distance)
     
     # Assuming rear steering angle is some function of the front steering angle
     rear_steering_angle = 0.5 * front_steering_angle  # This is just an example and might not be accurate
-    
+
+    print(f"Desired heading: {theta_desired}, Heading error: {theta_e}, Steering angles: front={front_steering_angle}, rear={rear_steering_angle}")
+    logging.debug(f"Steering angles: front={front_steering_angle}, rear={rear_steering_angle}")
+
     return front_steering_angle, rear_steering_angle
+
+
 
 
 """
 Planner Helpers
 """
-@njit(fastmath=False, cache=True)
+    
 def nearest_point_on_trajectory(point, trajectory):
     """
     Return the nearest point along the given piecewise linear trajectory.
@@ -77,7 +126,7 @@ def nearest_point_on_trajectory(point, trajectory):
     min_dist_segment = np.argmin(dists)
     return projections[min_dist_segment], dists[min_dist_segment], t[min_dist_segment], min_dist_segment
 
-@njit(fastmath=False, cache=True)
+    
 def first_point_on_trajectory_intersecting_circle(point, radius, trajectory, t=0.0, wrap=False):
     """
     starts at beginning of trajectory, and find the first point one radius away from the given point along the trajectory.
@@ -161,7 +210,7 @@ def first_point_on_trajectory_intersecting_circle(point, radius, trajectory, t=0
 
     return first_p, first_i, first_t
 
-@njit(fastmath=False, cache=True)
+    
 def get_actuation(pose_theta, lookahead_point, position, lookahead_distance, wheelbase):
     """
     Returns actuation
@@ -193,23 +242,41 @@ class PurePursuitPlanner:
         self.waypoints = np.loadtxt(conf.wpt_path, delimiter=conf.wpt_delim, skiprows=conf.wpt_rowskip)
 
     def render_waypoints(self, e):
-        """
-        update waypoints being drawn by EnvRenderer
-        """
+        # Clear existing waypoints from the batch
+        for wp in self.drawn_waypoints:
+            e.batch.remove(wp)
+        self.drawn_waypoints.clear()
 
-        #points = self.waypoints
+        # Draw new waypoints as lines
+        for i in range(len(self.waypoints) - 1):
+            line_start = self.waypoints[i]
+            line_end = self.waypoints[i + 1]
+            self.drawn_waypoints.append(e.batch.add(2, pyglet.gl.GL_LINES, None, 
+                ('v2f', [line_start[0], line_start[1], line_end[0], line_end[1]]),
+                ('c3B', [255, 255, 255, 255, 255, 255])))  # White color for visibility
 
+
+    def render_waypoints(self, env_renderer):
+        """
+        Update waypoints being drawn by EnvRenderer
+        """
         points = np.vstack((self.waypoints[:, self.conf.wpt_xind], self.waypoints[:, self.conf.wpt_yind])).T
         
-        scaled_points = 50.*points
+        # Scale the points for rendering
+        scaled_points = 50. * points
 
-        for i in range(points.shape[0]):
-            if len(self.drawn_waypoints) < points.shape[0]:
-                b = e.batch.add(1, GL_POINTS, None, ('v3f/stream', [scaled_points[i, 0], scaled_points[i, 1], 0.]),
-                                ('c3B/stream', [183, 193, 222]))
-                self.drawn_waypoints.append(b)
-            else:
-                self.drawn_waypoints[i].vertices = [scaled_points[i, 0], scaled_points[i, 1], 0.]
+        # Check if we have previously drawn waypoints, and if so, update them
+        if not self.drawn_waypoints:
+            for i in range(points.shape[0] - 1):
+                line_start = scaled_points[i]
+                line_end = scaled_points[i + 1]
+                self.drawn_waypoints.append(env_renderer.batch.add(2, pyglet.gl.GL_LINES, None, 
+                            ('v2f/stream', [line_start[0], line_start[1], line_end[0], line_end[1]]),
+                            ('c3B/stream', [183, 193, 222, 183, 193, 222])))
+        else:
+            for i, line in enumerate(self.drawn_waypoints):
+                if i < points.shape[0] - 1:
+                    line.vertices = [scaled_points[i][0], scaled_points[i][1], scaled_points[i + 1][0], scaled_points[i + 1][1]]
         
     def _get_current_waypoint(self, waypoints, lookahead_distance, position, theta):
         """
@@ -293,38 +360,42 @@ def generate_circle_vertices(center, radius, segments=20):
         vertices.extend((center[0] + dx, center[1] + dy))
     return vertices
 
+
 def draw_wheels_using_pyglet(env_renderer, car_pos, car_angle, CAR_LENGTH, CAR_WIDTH):
     WHEEL_RADIUS = CAR_LENGTH / 8
-    
-    # Calculate relative wheel positions just like in the draw_wheels function
+    # Define the scale factor for rendering based on the renderer's settings
+    scale_factor = 50
+
+    # Calculate relative wheel positions based on car position and orientation
     HALF_CAR_LEN = CAR_LENGTH / 2
     HALF_CAR_WIDTH = CAR_WIDTH / 2
-    front_x = car_pos[0] + HALF_CAR_LEN * np.cos(car_angle)
-    front_y = car_pos[1] + HALF_CAR_LEN * np.sin(car_angle)
-    rear_x = car_pos[0] - HALF_CAR_LEN * np.cos(car_angle)
-    rear_y = car_pos[1] - HALF_CAR_LEN * np.sin(car_angle)
+    wheel_positions = [
+        (car_pos[0] + HALF_CAR_LEN * np.cos(car_angle) - HALF_CAR_WIDTH * np.sin(car_angle),
+         car_pos[1] + HALF_CAR_LEN * np.sin(car_angle) + HALF_CAR_WIDTH * np.cos(car_angle)),
+        (car_pos[0] + HALF_CAR_LEN * np.cos(car_angle) + HALF_CAR_WIDTH * np.sin(car_angle),
+         car_pos[1] + HALF_CAR_LEN * np.sin(car_angle) - HALF_CAR_WIDTH * np.cos(car_angle)),
+        (car_pos[0] - HALF_CAR_LEN * np.cos(car_angle) - HALF_CAR_WIDTH * np.sin(car_angle),
+         car_pos[1] - HALF_CAR_LEN * np.sin(car_angle) + HALF_CAR_WIDTH * np.cos(car_angle)),
+        (car_pos[0] - HALF_CAR_LEN * np.cos(car_angle) + HALF_CAR_WIDTH * np.sin(car_angle),
+         car_pos[1] - HALF_CAR_LEN * np.sin(car_angle) - HALF_CAR_WIDTH * np.cos(car_angle))
+    ]
 
-    # Calculate positions for all four wheels
-    front_left = (front_x - HALF_CAR_WIDTH * np.sin(car_angle), front_y + HALF_CAR_WIDTH * np.cos(car_angle))
-    front_right = (front_x + HALF_CAR_WIDTH * np.sin(car_angle), front_y - HALF_CAR_WIDTH * np.cos(car_angle))
-    rear_left = (rear_x - HALF_CAR_WIDTH * np.sin(car_angle), rear_y + HALF_CAR_WIDTH * np.cos(car_angle))
-    rear_right = (rear_x + HALF_CAR_WIDTH * np.sin(car_angle), rear_y - HALF_CAR_WIDTH * np.cos(car_angle))
+    # Clear previous wheel drawings
+    if hasattr(env_renderer, 'wheel_drawings'):
+        for drawing in env_renderer.wheel_drawings:
+            drawing.delete()
+    env_renderer.wheel_drawings = []
 
-    # Scale for rendering
-    scale_factor = 50  # This might need adjustment based on your rendering scale
-    front_left = (scale_factor * front_left[0], scale_factor * front_left[1])
-    front_right = (scale_factor * front_right[0], scale_factor * front_right[1])
-    rear_left = (scale_factor * rear_left[0], scale_factor * rear_left[1])
-    rear_right = (scale_factor * rear_right[0], scale_factor * rear_right[1])
+    # Draw the wheels at the new positions
+    for wheel_pos in wheel_positions:
+        scaled_wheel_pos = (scale_factor * wheel_pos[0], scale_factor * wheel_pos[1])
+        wheel_vertices = generate_circle_vertices(scaled_wheel_pos, scale_factor * WHEEL_RADIUS)
+        wheel_color = (100, 100, 100) * (len(wheel_vertices) // 2)  # Gray color for wheels
+        wheel_drawing = env_renderer.batch.add(len(wheel_vertices) // 2, pyglet.gl.GL_TRIANGLE_FAN, None,
+                                               ('v2f/static', wheel_vertices),
+                                               ('c3B/static', wheel_color))
+        env_renderer.wheel_drawings.append(wheel_drawing)
 
-    wheel_color = (100, 100, 100)  # RGB for grey
-
-    # Generate vertices for each wheel and add to the renderer batch
-    for wheel_center in [front_left, front_right, rear_left, rear_right]:
-        wheel_vertices = generate_circle_vertices(wheel_center, WHEEL_RADIUS * scale_factor)  # scale the radius as well
-        env_renderer.batch.add(len(wheel_vertices) // 2, pyglet.gl.GL_TRIANGLE_FAN, None, 
-                               ('v2f', wheel_vertices),
-                               ('c3B', wheel_color * (len(wheel_vertices) // 2)))
 
 
 
@@ -333,6 +404,12 @@ def main():
     main entry point
     """
 
+    # Parameters for speed control
+    MAX_SPEED = 10.0  # Maximum speed (m/s)
+    MIN_SPEED = 2.0   # Minimum speed (m/s)
+    MAX_STEERING_ANGLE = 0.35  # Maximum steering angle (rad) for both front and rear
+
+
     work = {'mass': 3.463388126201571, 'lf': 0.15597534362552312, 'tlad': 0.82461887897713965, 'vgain': 1.375}#0.90338203837889}
     
     with open('config_example_map.yaml') as file:
@@ -340,6 +417,30 @@ def main():
     conf = Namespace(**conf_dict)
 
     planner = PurePursuitPlanner(conf, (0.17145+0.15875)) #FlippyPlanner(speed=0.2, flip_every=1, steer=10)
+
+
+    # Define initial values before the while loop
+    initial_front_steering_angle = 0.0  # Initialize with the starting front steering angle
+    initial_rear_steering_angle = 0.0   # Initialize with the starting rear steering angle
+    MAX_STEERING_RATE = 100  # Maximum change per timestep, adjust as needed
+
+    prev_front_steering_angle = initial_front_steering_angle
+    prev_rear_steering_angle = initial_rear_steering_angle
+
+    # Define the rate limit function
+    def rate_limit_steering(prev_angle, new_angle, max_rate):
+        # Calculate the difference between the new angle and the previous angle
+        angle_diff = new_angle - prev_angle
+        
+        # If the difference is greater than the max rate, limit the change
+        if angle_diff > max_rate:
+            return prev_angle + max_rate
+        elif angle_diff < -max_rate:
+            return prev_angle - max_rate
+        else:
+            return new_angle
+
+
 
     def render_callback(env_renderer):
         # custom extra drawing function
@@ -364,7 +465,6 @@ def main():
         planner.render_waypoints(env_renderer)
 
 
-
     env = gym.make('f110_gym:f110-v0', map=conf.map_path, map_ext=conf.map_ext, num_agents=1, timestep=0.01, integrator=Integrator.RK4)
     env.add_render_callback(render_callback)
     
@@ -377,11 +477,45 @@ def main():
     laptime = 0.0
     start = time.time()
 
+    # Main loop
     while not done:
-        speed, front_steer, rear_steer = planner.plan(obs['poses_x'][0], obs['poses_y'][0], obs['poses_theta'][0], work['tlad'], work['vgain'])
-        obs, step_reward, done, info = env.step(np.array([[front_steer, rear_steer, speed]]))
-        laptime += step_reward
-        env.render(mode='human')
+    # Wrap the current pose to [-pi, pi]
+        obs['poses_theta'][0] = wrap_angle(obs['poses_theta'][0])
+
+        # Plan the path and get control commands
+        speed, front_steering_angle, rear_steering_angle = planner.plan(
+            obs['poses_x'][0], obs['poses_y'][0], obs['poses_theta'][0], work['tlad'], work['vgain']
+        )
+
+        # Apply rate limiting to the steering commands (if implemented)
+        front_steering_angle = rate_limit_steering(
+            prev_front_steering_angle, front_steering_angle, MAX_STEERING_RATE
+        )
+        rear_steering_angle = rate_limit_steering(
+            prev_rear_steering_angle, rear_steering_angle, MAX_STEERING_RATE
+        )
+
+        # Proportional speed control based on steering
+        speed = proportional_speed_control(
+            front_steering_angle, rear_steering_angle, MAX_SPEED, MIN_SPEED, MAX_STEERING_ANGLE
+        )
+
+        # Ensure steering commands are within vehicle limits
+        front_steering_angle = scale_steering(front_steering_angle, MAX_STEERING_ANGLE)
+        rear_steering_angle = scale_steering(rear_steering_angle, MAX_STEERING_ANGLE)
+
+        # Execute simulation step
+        obs, step_reward, done, info = env.step(np.array([[front_steering_angle, rear_steering_angle, speed]]))
+
+        # Update previous steering angles for next iteration's rate limiting
+        prev_front_steering_angle = front_steering_angle
+        prev_rear_steering_angle = rear_steering_angle
+
+        # Render the environment
+        env.render()
+
+
+
 
         
     print('Sim elapsed time:', laptime, 'Real elapsed time:', time.time()-start)
