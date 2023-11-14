@@ -175,35 +175,38 @@ def vehicle_dynamics_st(x, u_init, mu, C_Sf, C_Sr, lf, lr, h, m, I, s_min, s_max
 
 def vehicle_dynamics_st_4w(x, u_init, mu, C_Sf, C_Sr, lf, lr, h, m, I, s_min, s_max, sv_min, sv_max, v_switch, a_max, v_min, v_max):
     """
-    Four Wheel Kinematic Vehicle Dynamics.example
-            u2: longitudinal acceleration
-
-    Returns:
-        f (numpy.ndarray): right hand side of differential equations
+    Four Wheel Kinematic Vehicle Dynamics.
+    ...
     """
-    # constraints
-    u = np.array([
-        steering_constraint(x[2], u_init[0], s_min, s_max, sv_min, sv_max),
-        accl_constraints(x[3], u_init[1], v_switch, a_max, v_min, v_max)
-    ])
 
-    # system dynamics
+    # Extract velocity 'v' and other necessary states from the state vector 'x'
+    v = x[4]  # Velocity
+    delta_f = u_init[0]  # Front steering angle
+    delta_r = u_init[1]  # Rear steering angle
+
+    # Calculate the effective steering angle for a four-wheel steering vehicle
+    delta_eff = np.arctan2(lr * np.tan(delta_f) + lf * np.tan(delta_r), lf + lr)
+
+    # Calculate the yaw rate (dot_psi)
+    dot_psi = v / (lf + lr) * np.sin(delta_eff)
+
+    # Constraints for acceleration and steering
+    accl = accl_constraints(x[3], u_init[2], v_switch, a_max, v_min, v_max)
+    steer = steering_constraint(delta_f, u_init[0], s_min, s_max, sv_min, sv_max)
+
+    # System dynamics
     f = np.array([
-        x[3]*np.cos(x[4] + x[2]),
-        x[3]*np.sin(x[4] + x[2]),
-        u[0],
-        u[1]
+        v * np.cos(x[5] + delta_eff),  # x_dot
+        v * np.sin(x[5] + delta_eff),  # y_dot
+        steer,                         # delta_f_dot
+        0,                             # delta_r_dot (if rear steering rate is not modeled)
+        accl,                          # v_dot
+        dot_psi,                       # yaw_angle_dot
+        0                              # yaw_rate_dot (if not modeled separately)
     ])
 
-    # Extract the front and rear steering angles from u_init
-    delta_f = u_init[1]
-    delta_r = u_init[2]
-    
-    # Update the side slip angle beta and yaw rate dot_psi to account for 4-wheel steering
-    beta = atan((lr * delta_f + lf * delta_r) / (v + lr * dot_psi - lf * dot_psi))
-    dot_psi = (2 * (F_yf * lf - F_yr * lr) - (2 * F_xr + 2 * F_xf) * beta) / I
-    
     return f
+
   
 
 def vehicle_dynamics_ks_4w(t, x, u, parameters):

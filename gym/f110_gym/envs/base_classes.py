@@ -33,11 +33,15 @@ import warnings
 import numpy as np
 from numba import njit
 
+from math import atan
+
+
 from f110_gym.envs.dynamic_models import vehicle_dynamics_st, pid
 from f110_gym.envs.laser_models import ScanSimulator2D, check_ttc_jit, ray_cast
 from f110_gym.envs.collision_models import get_vertices, collision_multiple
 
-from .dynamic_models import vehicle_dynamics_st_4w, vehicle_dynamics_ks_4w
+from .dynamic_models import vehicle_dynamics_st_4w, vehicle_dynamics_ks_4w, accl_constraints, steering_constraint
+
 
 class Integrator(Enum):
     RK4 = 1
@@ -187,36 +191,18 @@ class RaceCar(object):
     
     def set_map(self, map_path, map_ext):
         """
-        Sets the map for scan simulator
-        
+        Sets the map for the scan simulator.
+
         Args:
-            map_path (str): absolute path to the map yaml file
-            map_ext (str): extension of the map image file
+            map_path (str): absolute path to the map yaml file.
+            map_ext (str): extension of the map image file.
         """
+        # Initialize the scan simulator if it hasn't been already
+        if RaceCar.scan_simulator is None:
+            self.scan_rng = np.random.default_rng(seed=self.seed)
+            RaceCar.scan_simulator = ScanSimulator2D(self.num_beams, self.fov)
+        # Set the map for the scan simulator
         RaceCar.scan_simulator.set_map(map_path, map_ext)
-
-    def reset(self, pose):
-        """
-        Resets the vehicle to a pose
-        
-        Args:
-            pose (np.ndarray (3, )): pose to reset the vehicle to
-
-        Returns:
-            None
-        """
-        # clear control inputs
-        self.accel = 0.0
-        self.steer_angle_vel = 0.0
-        # clear collision indicator
-        self.in_collision = False
-        # clear state
-        self.state = np.zeros((7, ))
-        self.state[0:2] = pose[0:2]
-        self.state[4] = pose[2]
-        self.steer_buffer = np.empty((0, ))
-        # reset scan random generator
-        self.scan_rng = np.random.default_rng(seed=self.seed)
 
     def ray_cast_agents(self, scan):
         """
@@ -244,6 +230,7 @@ class RaceCar(object):
     def check_ttc(self, current_scan):
         """
         Check iTTC against the environment, sets vehicle states accordingly if collision occurs.
+from dynamic_models import accl_constraints, steering_constraint
         Note that this does NOT check collision with other agents.
 
         state is [x, y, steer_angle, vel, yaw_angle, yaw_rate, slip_angle]
@@ -271,16 +258,16 @@ class RaceCar(object):
         return in_collision
 
     def update_pose(self, front_steer, rear_steer, vel):
-
         """
         Steps the vehicle's physical simulation
 
         Args:
-            steer (float): desired steering angle
+            front_steer (float): desired front steering angle
+            rear_steer (float): desired rear steering angle
             vel (float): desired longitudinal velocity
 
         Returns:
-            current_scan
+            None
         """
 
         # state is [x, y, steer_angle, vel, yaw_angle, yaw_rate, slip_angle]
@@ -290,138 +277,57 @@ class RaceCar(object):
         if self.steer_buffer.shape[0] < self.steer_buffer_size:
             steer = 0.
             self.steer_buffer = np.append(front_steer, self.steer_buffer)
-
         else:
             steer = self.steer_buffer[-1]
             self.steer_buffer = self.steer_buffer[:-1]
             self.steer_buffer = np.append(front_steer, self.steer_buffer)
 
-
-
         # steering angle velocity input to steering velocity acceleration input
         accl, sv = pid(vel, front_steer, self.state[3], self.state[2], self.params['sv_max'], self.params['a_max'], self.params['v_max'], self.params['v_min'])
-        
+
+        # Apply constraints to acceleration and steering velocity
+        accl = accl_constraints(self.state[3], accl, self.params['v_switch'], self.params['a_max'], self.params['v_min'], self.params['v_max'])
+        sv = steering_constraint(self.state[2], sv, self.params['s_min'], self.params['s_max'], self.params['sv_min'], self.params['sv_max'])
+
         if self.integrator is Integrator.RK4:
-            # RK4 integration
-            k1 = vehicle_dynamics_st(
-                self.state,
-                np.array([sv, accl]),
-                self.params['mu'],
-                self.params['C_Sf'],
-                self.params['C_Sr'],
-                self.params['lf'],
-                self.params['lr'],
-                self.params['h'],
-                self.params['m'],
-                self.params['I'],
-                self.params['s_min'],
-                self.params['s_max'],
-                self.params['sv_min'],
-                self.params['sv_max'],
-                self.params['v_switch'],
-                self.params['a_max'],
-                self.params['v_min'],
-                self.params['v_max'])
+            # RK4 integration with vehicle_dynamics_st_4w
+            u = np.array([sv, accl, rear_steer])  # Control inputs including rear steer
+            dt = self.time_step
 
-            k2_state = self.state + self.time_step*(k1/2)
+            k1 = vehicle_dynamics_st_4w(self.state, u, self.params['mu'], self.params['C_Sf'], self.params['C_Sr'], self.params['lf'], self.params['lr'], self.params['h'], self.params['m'], self.params['I'], self.params['s_min'], self.params['s_max'], self.params['sv_min'], self.params['sv_max'], self.params['v_switch'], self.params['a_max'], self.params['v_min'], self.params['v_max'])
+            k2 = vehicle_dynamics_st_4w(self.state + dt/2 * k1, u, self.params['mu'], self.params['C_Sf'], self.params['C_Sr'], self.params['lf'], self.params['lr'], self.params['h'], self.params['m'], self.params['I'], self.params['s_min'], self.params['s_max'], self.params['sv_min'], self.params['sv_max'], self.params['v_switch'], self.params['a_max'], self.params['v_min'], self.params['v_max'])
+            k3 = vehicle_dynamics_st_4w(self.state + dt/2 * k2, u, self.params['mu'], self.params['C_Sf'], self.params['C_Sr'], self.params['lf'], self.params['lr'], self.params['h'], self.params['m'], self.params['I'], self.params['s_min'], self.params['s_max'], self.params['sv_min'], self.params['sv_max'], self.params['v_switch'], self.params['a_max'], self.params['v_min'], self.params['v_max'])
+            k4 = vehicle_dynamics_st_4w(self.state + dt * k3, u, self.params['mu'], self.params['C_Sf'], self.params['C_Sr'], self.params['lf'], self.params['lr'], self.params['h'], self.params['m'], self.params['I'], self.params['s_min'], self.params['s_max'], self.params['sv_min'], self.params['sv_max'], self.params['v_switch'], self.params['a_max'], self.params['v_min'], self.params['v_max'])
 
-            k2 = vehicle_dynamics_st(
-                k2_state,
-                np.array([sv, accl]),
-                self.params['mu'],
-                self.params['C_Sf'],
-                self.params['C_Sr'],
-                self.params['lf'],
-                self.params['lr'],
-                self.params['h'],
-                self.params['m'],
-                self.params['I'],
-                self.params['s_min'],
-                self.params['s_max'],
-                self.params['sv_min'],
-                self.params['sv_max'],
-                self.params['v_switch'],
-                self.params['a_max'],
-                self.params['v_min'],
-                self.params['v_max'])
+            # Update state
+            self.state = self.state + dt/6 * (k1 + 2*k2 + 2*k3 + k4)
 
-            k3_state = self.state + self.time_step*(k2/2)
-
-            k3 = vehicle_dynamics_st(
-                k3_state,
-                np.array([sv, accl]),
-                self.params['mu'],
-                self.params['C_Sf'],
-                self.params['C_Sr'],
-                self.params['lf'],
-                self.params['lr'],
-                self.params['h'],
-                self.params['m'],
-                self.params['I'],
-                self.params['s_min'],
-                self.params['s_max'],
-                self.params['sv_min'],
-                self.params['sv_max'],
-                self.params['v_switch'],
-                self.params['a_max'],
-                self.params['v_min'],
-                self.params['v_max'])
-
-            k4_state = self.state + self.time_step*k3
-
-            k4 = vehicle_dynamics_st(
-                k4_state,
-                np.array([sv, accl]),
-                self.params['mu'],
-                self.params['C_Sf'],
-                self.params['C_Sr'],
-                self.params['lf'],
-                self.params['lr'],
-                self.params['h'],
-                self.params['m'],
-                self.params['I'],
-                self.params['s_min'],
-                self.params['s_max'],
-                self.params['sv_min'],
-                self.params['sv_max'],
-                self.params['v_switch'],
-                self.params['a_max'],
-                self.params['v_min'],
-                self.params['v_max'])
-
-            # dynamics integration
-            self.state = self.state + self.time_step*(1/6)*(k1 + 2*k2 + 2*k3 + k4)
-        
         elif self.integrator is Integrator.Euler:
-            f = vehicle_dynamics_st(
-                self.state,
-                np.array([sv, accl]),
-                self.params['mu'],
-                self.params['C_Sf'],
-                self.params['C_Sr'],
-                self.params['lf'],
-                self.params['lr'],
-                self.params['h'],
-                self.params['m'],
-                self.params['I'],
-                self.params['s_min'],
-                self.params['s_max'],
-                self.params['sv_min'],
-                self.params['sv_max'],
-                self.params['v_switch'],
-                self.params['a_max'],
-                self.params['v_min'],
-                self.params['v_max'])
-            self.state = self.state + self.time_step * f
-        
+            # Euler integration with vehicle_dynamics_st_4w
+            u = np.array([sv, accl, rear_steer])  # Control inputs including rear steer
+            dt = self.time_step
+
+            # Use the vehicle_dynamics_st_4w function for Euler integration
+            f = vehicle_dynamics_st_4w(self.state, u, self.params['mu'], self.params['C_Sf'], self.params['C_Sr'], self.params['lf'], self.params['lr'], self.params['h'], self.params['m'], self.params['I'], self.params['s_min'], self.params['s_max'], self.params['sv_min'], self.params['sv_max'], self.params['v_switch'], self.params['a_max'], self.params['v_min'], self.params['v_max'])
+
+            # Update state with Euler method
+            self.state = self.state + dt * f
+
         else:
             raise SyntaxError(f"Invalid Integrator Specified. Provided {self.integrator.name}. Please choose RK4 or Euler")
 
-        # bound yaw angle
+            # Bound yaw angle for wrapping around 2*pi
         if self.state[4] > 2*np.pi:
             self.state[4] = self.state[4] - 2*np.pi
         elif self.state[4] < 0:
             self.state[4] = self.state[4] + 2*np.pi
+
+    # The function vehicle_dynamics_st_4w is expected to return the derivatives of the state
+    # It is important to ensure that the vehicle_dynamics_st_4w function is properly defined to return the correct derivatives
+
+
+
+    
 
         # update scan
         
@@ -480,6 +386,41 @@ class RaceCar(object):
 
         agent_scans[agent_index] = new_scan
 
+    def reset(self, pose):
+        """
+        Resets the vehicle to a pose
+
+        Args:
+            pose (np.ndarray (3, )): pose to reset the vehicle to. Should be a 1D array with 3 elements (x, y, theta).
+
+        Returns:
+            None
+        """
+        # Ensure that pose is a NumPy array with the correct shape
+        pose = np.asarray(pose)
+        if pose.ndim != 1 or pose.size != 3:
+            raise ValueError("pose must be a 1D array with three elements")
+
+        # Reset the state of the vehicle
+        self.state = np.zeros((7, ))
+        self.state[0] = pose[0]  # x position
+        self.state[1] = pose[1]  # y position
+        self.state[4] = pose[2]  # orientation theta
+
+        # Clear control inputs
+        self.accel = 0.0
+        self.steer_angle_vel = 0.0
+
+        # Clear collision indicator
+        self.in_collision = False
+
+        # Clear steering buffer
+        self.steer_buffer = np.empty((0, ))
+
+        # Reset scan random generator
+        self.scan_rng = np.random.default_rng(seed=self.seed)
+
+
 
 class Simulator(object):
     """
@@ -494,6 +435,18 @@ class Simulator(object):
         collision_idx (np.ndarray(num_agents, )): which agent is each agent in collision with
 
     """
+    
+    def set_map(self, map_path, map_ext):
+        """
+        Sets the map for each agent's scan simulator.
+        
+        Args:
+            map_path (str): path to the map yaml file
+            map_ext (str): extension for the map image file
+        """
+        # This will call set_map on each RaceCar instance, which should have the method defined.
+        for agent in self.agents:
+            agent.set_map(map_path, map_ext)
 
     def __init__(self, params, num_agents, seed, time_step=0.01, ego_idx=0, integrator=Integrator.RK4):
         """
@@ -528,20 +481,6 @@ class Simulator(object):
             else:
                 agent = RaceCar(params, self.seed, is_ego=False, time_step=self.time_step, integrator=integrator)
                 self.agents.append(agent)
-
-    def set_map(self, map_path, map_ext):
-        """
-        Sets the map of the environment and sets the map for scan simulator of each agent
-
-        Args:
-            map_path (str): path to the map yaml file
-            map_ext (str): extension for the map image file
-
-        Returns:
-            None
-        """
-        for agent in self.agents:
-            agent.set_map(map_path, map_ext)
 
 
     def update_params(self, params, agent_idx=-1):
@@ -643,20 +582,30 @@ class Simulator(object):
 
     def reset(self, poses):
         """
-        Resets the simulation environment by given poses
+        Resets the simulator and all agents to specified poses.
 
-        Arges:
-            poses (np.ndarray (num_agents, 3)): poses to reset agents to
+        Args:
+            poses (list of np.ndarray): List of poses to reset each agent to. Each pose should be a 1D array with three elements (x, y, theta).
 
         Returns:
             None
         """
-        
-        if poses.shape[0] != self.num_agents:
-            raise ValueError('Number of poses for reset does not match number of agents.')
+        if len(poses) != self.num_agents:
+            raise ValueError("Number of poses must match the number of agents in the simulator.")
 
-        # loop over poses to reset
-        for i in range(self.num_agents):
-            self.agents[i].reset(poses[i, :])
+        # Reset each agent with its corresponding pose
+        for i, pose in enumerate(poses):
+            if not (isinstance(pose, np.ndarray) and pose.ndim == 1 and pose.size == 3):
+                raise ValueError(f"Pose for agent {i} must be a 1D array with three elements")
+            self.agents[i].reset(pose)
+
+        # Reset any other environment-specific properties here
+        # Example: self.some_environment_property = initial_value
+
+        # Reset collisions
+        self.collisions = np.zeros((self.num_agents, ))
+        self.collision_idx = -1 * np.ones((self.num_agents, ))
+
+
 
 
