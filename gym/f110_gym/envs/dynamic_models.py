@@ -13,6 +13,7 @@
 
 
 
+import logging
 import numpy as np
 from numba import njit
 
@@ -205,6 +206,7 @@ def vehicle_dynamics_st_4w(x, u_init, mu, C_Sf, C_Sr, lf, lr, h, m, I, s_min, s_
         0                              # yaw_rate_dot (if not modeled separately)
     ])
 
+    logging.debug(f"Vehicle Dynamics: State={x}, Control Inputs={u_init}, Dynamics Output={f}")
     return f
 
   

@@ -28,6 +28,9 @@ initial_speed = 0.0        # Car starts from a standstill
 logging.basicConfig(filename='/home/larry1129/f1tenth_gym/logfile.log', level=logging.DEBUG, 
                     format='%(asctime)s:%(levelname)s:%(message)s')
 
+def log_current_state_and_waypoint(pose_x, pose_y, pose_theta, current_waypoint):
+    logging.debug(f"Current Position: x={pose_x}, y={pose_y}, theta={pose_theta}")
+    logging.debug(f"Target Waypoint: x={current_waypoint[0]}, y={current_waypoint[1]}, speed={current_waypoint[2]}")
 
 
 
@@ -405,10 +408,17 @@ def main():
     main entry point
     """
 
-    # Parameters for speed control
-    MAX_SPEED = 10.0  # Maximum speed (m/s)
-    MIN_SPEED = 2.0   # Minimum speed (m/s)
-    MAX_STEERING_ANGLE = 0.35  # Maximum steering angle (rad) for both front and rear
+    # Initialize constants for speed control
+    INITIAL_SPEED = 5.0  # Starting speed
+    SPEED_INCREMENT = 0.1  # Increment to increase or decrease speed each cycle
+    MAX_SPEED = 20.0  # Maximum speed
+    MIN_SPEED = 0.0  # Minimum speed
+    MAX_STEERING_ANGLE = 0.53  # Maximum steering angle in radians
+
+    # Initialize variables for speed and steering
+    current_speed = INITIAL_SPEED
+    front_steering_angle = 0.0
+    rear_steering_angle = 0.0
 
 
     work = {'mass': 3.463388126201571, 'lf': 0.15597534362552312, 'tlad': 0.82461887897713965, 'vgain': 1.375}#0.90338203837889}
@@ -423,7 +433,7 @@ def main():
     # Define initial values before the while loop
     initial_front_steering_angle = 0.0  # Initialize with the starting front steering angle
     initial_rear_steering_angle = 0.0   # Initialize with the starting rear steering angle
-    MAX_STEERING_RATE = 100  # Maximum change per timestep, adjust as needed
+    MAX_STEERING_RATE = 80  # Maximum change per timestep, adjust as needed
 
     prev_front_steering_angle = initial_front_steering_angle
     prev_rear_steering_angle = initial_rear_steering_angle
@@ -481,25 +491,24 @@ def main():
 
     # Main loop
     while not done:
-    # Wrap the current pose to [-pi, pi]
+        # Wrap the current pose to [-pi, pi]
         obs['poses_theta'][0] = wrap_angle(obs['poses_theta'][0])
 
         # Plan the path and get control commands
-        speed, front_steering_angle, rear_steering_angle = planner.plan(
+        proposed_speed, proposed_front_steering, proposed_rear_steering = planner.plan(
             obs['poses_x'][0], obs['poses_y'][0], obs['poses_theta'][0], work['tlad'], work['vgain']
         )
 
-        # Apply rate limiting to the steering commands (if implemented)
+        # Update speed: simple example to increase or decrease speed
+        current_speed += SPEED_INCREMENT
+        current_speed = min(max(current_speed, MIN_SPEED), MAX_SPEED)
+
+        # Update steering angles: apply rate limiting
         front_steering_angle = rate_limit_steering(
-            prev_front_steering_angle, front_steering_angle, MAX_STEERING_RATE
+            front_steering_angle, proposed_front_steering, MAX_STEERING_RATE
         )
         rear_steering_angle = rate_limit_steering(
-            prev_rear_steering_angle, rear_steering_angle, MAX_STEERING_RATE
-        )
-
-        # Proportional speed control based on steering
-        speed = proportional_speed_control(
-            front_steering_angle, rear_steering_angle, MAX_SPEED, MIN_SPEED, MAX_STEERING_ANGLE
+            rear_steering_angle, proposed_rear_steering, MAX_STEERING_RATE
         )
 
         # Ensure steering commands are within vehicle limits
@@ -507,20 +516,13 @@ def main():
         rear_steering_angle = scale_steering(rear_steering_angle, MAX_STEERING_ANGLE)
 
         # Execute simulation step
-        obs, step_reward, done, info = env.step(np.array([[front_steering_angle, rear_steering_angle, speed]]))
-
-        # Update previous steering angles for next iteration's rate limiting
-        prev_front_steering_angle = front_steering_angle
-        prev_rear_steering_angle = rear_steering_angle
+        obs, step_reward, done, info = env.step(np.array([[front_steering_angle, rear_steering_angle, current_speed]]))
 
         # Render the environment
         env.render()
 
-
-
-
-        
     print('Sim elapsed time:', laptime, 'Real elapsed time:', time.time()-start)
+
 
 if __name__ == '__main__':
     main()

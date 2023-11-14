@@ -47,7 +47,7 @@ class Integrator(Enum):
     RK4 = 1
     Euler = 2
 
-    @staticmethod
+    
     def step(delta, delta_rear, v, x, y, theta, wb):
         # This function will now need to use the dynamics function for 4-wheel steering.
         # Use the `vehicle_dynamics_st_4w` or `vehicle_dynamics_ks_4w` based on the model you want.
