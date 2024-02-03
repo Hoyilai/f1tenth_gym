@@ -143,6 +143,31 @@ def get_actuation(pose_theta, lookahead_point, position, lookahead_distance, whe
     steering_angle = np.arctan(wheelbase/radius)
     return speed, steering_angle
 
+def get_4ws_actuation(pose_theta, lookahead_point, position, lookahead_distance, wheelbase, speed_threshold=5.0):
+    """
+    Returns actuation for 4WS with dynamic rear steering adjustment.
+    """
+    waypoint_y = np.dot(np.array([np.sin(-pose_theta), np.cos(-pose_theta)]), lookahead_point[0:2]-position)
+    speed = lookahead_point[2]
+    
+    if np.abs(waypoint_y) < 1e-6:
+        return speed, 0., 0.  # Speed, front steering, rear steering
+    
+    radius = 1/(2.0*waypoint_y/lookahead_distance**2)
+    front_steering_angle = np.arctan(wheelbase/radius)
+    
+    # Adjust rear steering based on speed
+    if speed < speed_threshold:
+        # Counter-phase steering for low speeds
+        rear_steering_angle = -0.5 * front_steering_angle
+    else:
+        # In-phase steering for high speeds (reduced angle for stability)
+        rear_steering_angle = 0.3 * front_steering_angle
+
+    return speed, front_steering_angle, rear_steering_angle
+
+
+
 class PurePursuitPlanner:
     """
     Example Planner
@@ -207,14 +232,18 @@ class PurePursuitPlanner:
         """
         position = np.array([pose_x, pose_y])
         lookahead_point = self._get_current_waypoint(self.waypoints, lookahead_distance, position, pose_theta)
+        
 
         if lookahead_point is None:
-            return 4.0, 0.0
+            return 4.0, 0.0, 0.0  # Speed, front steering, rear steering
 
-        speed, steering_angle = get_actuation(pose_theta, lookahead_point, position, lookahead_distance, self.wheelbase)
+        # speed, steering_angle = get_actuation(pose_theta, lookahead_point, position, lookahead_distance, self.wheelbase)
+        speed, front_steering_angle, rear_steering_angle = get_4ws_actuation(pose_theta, lookahead_point, position, lookahead_distance, self.wheelbase)
         speed = vgain * speed
 
-        return speed, steering_angle
+        print(f"Front Steering Angle: {front_steering_angle}, Rear Steering Angle: {rear_steering_angle}")
+
+        return speed, front_steering_angle, rear_steering_angle
 
 
 class FlippyPlanner:
@@ -277,14 +306,23 @@ def main():
 
     laptime = 0.0
     start = time.time()
+    damping_factor = 0.5  # Adjust this value to damp the steering response
 
     while not done:
-        speed, steer = planner.plan(obs['poses_x'][0], obs['poses_y'][0], obs['poses_theta'][0], work['tlad'], work['vgain'])
-        obs, step_reward, done, info = env.step(np.array([[steer, speed]]))
+        speed, front_steer_angle, rear_steer_angle = planner.plan(obs['poses_x'][0], obs['poses_y'][0], obs['poses_theta'][0], work['tlad'], work['vgain'])
+        
+        # Apply damping factor
+        front_steer_angle *= damping_factor
+        rear_steer_angle *= damping_factor
+
+        # Ensure the action array matches the environment's expected format
+        action = np.array([[speed, front_steer_angle, rear_steer_angle]])
+        obs, step_reward, done, info = env.step(action)
+        
         laptime += step_reward
         env.render(mode='human')
-        
-    print('Sim elapsed time:', laptime, 'Real elapsed time:', time.time()-start)
+            
+        print('Sim elapsed time:', laptime, 'Real elapsed time:', time.time()-start)
 
 if __name__ == '__main__':
     main()

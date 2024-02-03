@@ -21,6 +21,8 @@ Author: Hongrui Zheng
 """
 
 import numpy as np
+
+from scipy.integrate import odeint
 from numba import njit
 
 import unittest
@@ -119,6 +121,32 @@ def vehicle_dynamics_ks(x, u_init, mu, C_Sf, C_Sr, lf, lr, h, m, I, s_min, s_max
          u[1],
          x[3]/lwb*np.tan(x[2])])
     return f
+
+@njit(cache=True)
+def vehicle_dynamics_4ws(x, u_init, mu, C_Sf, C_Sr, lf, lr, h, m, I, s_min_f, s_max_f, sv_min_f, sv_max_f, s_min_r, s_max_r, sv_min_r, sv_max_r, v_switch, a_max, v_min, v_max):
+    """
+    Four Wheel Steering Vehicle Dynamics.
+    ...
+    """
+    lwb = lf + lr
+
+    # Apply constraints separately for front and rear steering
+    u_front_steering = steering_constraint(x[2], u_init[0], s_min_f, s_max_f, sv_min_f, sv_max_f)
+    u_rear_steering = steering_constraint(x[3], u_init[1], s_min_r, s_max_r, sv_min_r, sv_max_r)
+    u_acceleration = accl_constraints(x[4], u_init[2], v_switch, a_max, v_min, v_max)
+
+    # Adjusted dynamics calculations for 4WS
+    beta = np.arctan((lr / lwb) * np.tan(x[2]) - (lf / lwb) * np.tan(x[3]))
+    f = np.array([
+        x[4] * np.cos(x[5] + beta),  # x_dot
+        x[4] * np.sin(x[5] + beta),  # y_dot
+        u_front_steering,            # front_steering_velocity
+        u_rear_steering,             # rear_steering_velocity
+        u_acceleration,              # acceleration
+        x[4] / lwb * (np.tan(x[2]) - np.tan(x[3]))  # yaw_rate
+    ])
+    return f
+
 
 @njit(cache=True)
 def vehicle_dynamics_st(x, u_init, mu, C_Sf, C_Sr, lf, lr, h, m, I, s_min, s_max, sv_min, sv_max, v_switch, a_max, v_min, v_max):
@@ -422,5 +450,67 @@ class DynamicsTest(unittest.TestCase):
         self.assertTrue(all(abs(x_left_st[-1] - x_left_st_gt) < 1e-2))
         self.assertTrue(all(abs(x_left_ks[-1] - x_left_ks_gt) < 1e-2))
 
+    def simulate_4ws_dynamics(self, initial_state, control_input, t_final=1.0):
+        """
+        Simulates the 4WS dynamics for a given initial state and control input.
+        
+        Args:
+            initial_state (numpy.ndarray): The initial state of the vehicle.
+            control_input (numpy.ndarray): The control inputs [front steering velocity, rear steering velocity, acceleration].
+            t_final (float): The end time for the simulation.
+
+        Returns:
+            numpy.ndarray: The final state of the vehicle after simulation.
+        """
+        # Time vector for simulation
+        t = np.linspace(0, t_final, int(t_final * 100))  # Simulating at 100 Hz
+        
+        # Simulate using the 4WS dynamics function
+        result = odeint(
+            vehicle_dynamics_4ws,
+            initial_state,
+            t,
+            args=(
+                control_input,
+                self.mu,
+                self.C_Sf,
+                self.C_Sr,
+                self.lf,
+                self.lr,
+                self.h,
+                self.m,
+                self.I,
+                self.s_min,  # Assuming front and rear have the same steering limits for simplicity
+                self.s_max,
+                self.sv_min,
+                self.sv_max,
+                self.s_min,  # Assuming front and rear have the same steering limits for simplicity
+                self.s_max,
+                self.sv_min,
+                self.sv_max,
+                self.v_switch,
+                self.a_max,
+                self.v_min,
+                self.v_max,
+            ),
+        )
+
+        return result[-1]
+
+    def test_4ws_dynamics(self):
+        """
+        Test the 4WS dynamics with a predefined initial state and control input.
+        """
+        initial_state = np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0])  # Example initial state
+        control_input = np.array([0.1, -0.1, 1.0])  # Example control inputs: [front steering vel, rear steering vel, acceleration]
+        
+        final_state = self.simulate_4ws_dynamics(initial_state, control_input)
+        
+        # Here, you would add assertions to verify the final state matches expected behavior
+        # For example, asserting the vehicle has accelerated and the yaw rate is as expected
+        print("Final state:", final_state)
+        # self.assertAlmostEqual(final_state[...], expected_value, delta=tolerance)  # Example assertion
+
+# This line runs the unittests when the script is directly executed.
 if __name__ == '__main__':
     unittest.main()
